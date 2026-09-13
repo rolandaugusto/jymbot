@@ -34,6 +34,20 @@ async function initDb() {
       trained_at TEXT NOT NULL
     )
   `);
+
+  // One entry per user per day: dedupe any pre-existing rows before adding
+  // the unique index, keeping the most recent (highest id) entry per day.
+  await db.exec(`
+    DELETE FROM trainings
+    WHERE id NOT IN (
+      SELECT MAX(id) FROM trainings GROUP BY user_id, trained_at
+    )
+  `);
+
+  await db.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_trainings_user_date
+    ON trainings (user_id, trained_at)
+  `);
 }
 
 function todayISO() {
@@ -85,7 +99,8 @@ bot.action(/^log:(.+)$/, async (ctx) => {
   const date = todayISO();
 
   await db.run(
-    `INSERT INTO trainings (user_id, muscle_group, trained_at) VALUES (?, ?, ?)`,
+    `INSERT INTO trainings (user_id, muscle_group, trained_at) VALUES (?, ?, ?)
+     ON CONFLICT (user_id, trained_at) DO UPDATE SET muscle_group = excluded.muscle_group`,
     [userId, group, date]
   );
 
