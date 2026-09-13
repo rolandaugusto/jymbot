@@ -34,6 +34,20 @@ async function initDb() {
       trained_at TEXT NOT NULL
     )
   `);
+
+  // One entry per user per day: dedupe any pre-existing rows before adding
+  // the unique index, keeping the most recent (highest id) entry per day.
+  await db.exec(`
+    DELETE FROM trainings
+    WHERE id NOT IN (
+      SELECT MAX(id) FROM trainings GROUP BY user_id, trained_at
+    )
+  `);
+
+  await db.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_trainings_user_date
+    ON trainings (user_id, trained_at)
+  `);
 }
 
 function todayISO() {
@@ -55,6 +69,7 @@ const HELP_TEXT =
   "/log - log today's training\n" +
   "/history - see your last 10 entries\n" +
   "/stats - see totals per muscle group\n" +
+  "/suggest - suggest what to train next\n" +
   "/delete - delete your most recent entry\n" +
   "/help - show this list again";
 
@@ -85,7 +100,8 @@ bot.action(/^log:(.+)$/, async (ctx) => {
   const date = todayISO();
 
   await db.run(
-    `INSERT INTO trainings (user_id, muscle_group, trained_at) VALUES (?, ?, ?)`,
+    `INSERT INTO trainings (user_id, muscle_group, trained_at) VALUES (?, ?, ?)
+     ON CONFLICT (user_id, trained_at) DO UPDATE SET muscle_group = excluded.muscle_group`,
     [userId, group, date]
   );
 
@@ -125,6 +141,63 @@ bot.command('stats', async (ctx) => {
 
   const lines = rows.map((r) => `${r.muscle_group}: ${r.count}`);
   ctx.reply(`Training totals:\n\n${lines.join('\n')}`);
+});
+
+// /suggest -> recommend a muscle group based on the last 7 logs, falling
+// back to "whatever hasn't been trained yet" if there isn't enough history
+bot.command('suggest', async (ctx) => {
+  const userId = ctx.from.id;
+
+  const { count: totalCount } = await db.get(
+    `SELECT COUNT(*) as count FROM trainings WHERE user_id = ?`,
+    [userId]
+  );
+
+  if (totalCount < 7) {
+    const trainedRows = await db.all(
+      `SELECT DISTINCT muscle_group FROM trainings WHERE user_id = ?`,
+      [userId]
+    );
+    const trainedSet = new Set(trainedRows.map((r) => r.muscle_group));
+    const untrained = MUSCLE_GROUPS.filter((g) => !trainedSet.has(g));
+
+    if (untrained.length === 0) {
+      return ctx.reply(
+        "Not enough history yet for a smart suggestion, but you've tried every muscle group at least once. Keep logging with /log!"
+      );
+    }
+
+    const [suggestion, ...rest] = untrained;
+    return ctx.reply(
+      `Not enough history yet for a smart suggestion.\n\n` +
+      `💡 Try: ${suggestion} (not logged yet)` +
+      (rest.length ? `\nAlso untrained: ${rest.join(', ')}` : '')
+    );
+  }
+
+  const recentRows = await db.all(
+    `SELECT muscle_group FROM trainings WHERE user_id = ? ORDER BY id DESC LIMIT 7`,
+    [userId]
+  );
+
+  const counts = {};
+  MUSCLE_GROUPS.forEach((g) => { counts[g] = 0; });
+  recentRows.forEach((r) => {
+    if (counts[r.muscle_group] !== undefined) counts[r.muscle_group] += 1;
+  });
+
+  const minCount = Math.min(...MUSCLE_GROUPS.map((g) => counts[g]));
+  const neglected = MUSCLE_GROUPS.filter((g) => counts[g] === minCount);
+  const breakdown = MUSCLE_GROUPS
+    .slice()
+    .sort((a, b) => counts[a] - counts[b])
+    .map((g) => `${g}: ${counts[g]}`)
+    .join('\n');
+
+  ctx.reply(
+    `💡 Suggested: ${neglected.join(', ')}\n\n` +
+    `Based on your last ${recentRows.length} logs:\n${breakdown}`
+  );
 });
 
 // /delete -> remove most recent entry (undo mistakes)
