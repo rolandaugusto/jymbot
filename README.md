@@ -24,6 +24,7 @@ Logs your gym trainings (muscle group + date) to a local SQLite database.
 - `/log` — shows muscle group buttons, tap one to log it with today's date
 - `/history` — last 10 logged trainings
 - `/stats` — total count per muscle group
+- `/suggest` — suggests what to train next based on your last 7 logs (or whatever you haven't trained yet, if you don't have 7 logs)
 - `/delete` — deletes your most recent entry (undo)
 
 ## Data
@@ -32,6 +33,8 @@ Stored in `gym.db` (SQLite file, created automatically in the project folder).
 Table: `trainings (id, user_id, muscle_group, note, trained_at)`.
 
 `user_id` means multiple people can use the same bot and each gets their own log.
+
+Only one entry per user per day: logging again on a day that already has an entry overwrites it (unique index on `user_id, trained_at`).
 
 ## Customizing muscle groups
 
