@@ -2,9 +2,16 @@ const { Telegraf } = require('telegraf');
 const sqlite3 = require('sqlite3');
 const { open } = require('sqlite');
 const path = require('path');
+const fs = require('fs');
 
 const BOT_TOKEN = process.env.BOT_TOKEN || 'YOUR_TOKEN_HERE';
 const DB_PATH = process.env.DB_PATH || path.join(__dirname, 'gym.db');
+
+// Make sure the folder for the DB file exists (e.g. a Railway volume mount)
+const dbDir = path.dirname(DB_PATH);
+if (!fs.existsSync(dbDir)) {
+  fs.mkdirSync(dbDir, { recursive: true });
+}
 
 const MUSCLE_GROUPS = [
   'Chest', 'Back', 'Legs', 'Shoulders', 'Arms', 'Core', 'Cardio', 'Full Body'
@@ -33,17 +40,32 @@ function todayISO() {
   return new Date().toISOString().slice(0, 10); // YYYY-MM-DD
 }
 
+const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+// Converts a stored 'YYYY-MM-DD' date into 'DD.MM.YYYY DayName'
+function formatDisplayDate(isoDate) {
+  const [year, month, day] = isoDate.split('-');
+  const dateObj = new Date(`${isoDate}T00:00:00`);
+  const dayName = DAY_NAMES[dateObj.getDay()];
+  return `${day}.${month}.${year} ${dayName}`;
+}
+
+const HELP_TEXT =
+  "Commands:\n" +
+  "/log - log today's training\n" +
+  "/history - see your last 10 entries\n" +
+  "/stats - see totals per muscle group\n" +
+  "/delete - delete your most recent entry\n" +
+  "/help - show this list again";
+
 const bot = new Telegraf(BOT_TOKEN);
 
 bot.start((ctx) => {
-  ctx.reply(
-    "Welcome to your Gym Log bot! 💪\n\n" +
-    "Commands:\n" +
-    "/log - log today's training\n" +
-    "/history - see your last 10 entries\n" +
-    "/stats - see totals per muscle group\n" +
-    "/delete - delete your most recent entry"
-  );
+  ctx.reply(`Welcome to your Gym Log bot! 💪\n\n${HELP_TEXT}`);
+});
+
+bot.help((ctx) => {
+  ctx.reply(HELP_TEXT);
 });
 
 // /log -> shows muscle group buttons
@@ -84,7 +106,7 @@ bot.command('history', async (ctx) => {
     return ctx.reply('No trainings logged yet. Use /log to add one.');
   }
 
-  const lines = rows.map((r) => `${r.trained_at} — ${r.muscle_group}`);
+  const lines = rows.map((r) => `${formatDisplayDate(r.trained_at)} — ${r.muscle_group}`);
   ctx.reply(`Last ${rows.length} trainings:\n\n${lines.join('\n')}`);
 });
 
@@ -120,6 +142,11 @@ bot.command('delete', async (ctx) => {
 
   await db.run(`DELETE FROM trainings WHERE id = ?`, [last.id]);
   ctx.reply(`🗑️ Deleted: ${last.muscle_group} — ${last.trained_at}`);
+});
+
+// Fallback: any text that isn't a recognized command
+bot.on('text', (ctx) => {
+  ctx.reply(`I didn't understand that.\n\n${HELP_TEXT}`);
 });
 
 async function main() {
