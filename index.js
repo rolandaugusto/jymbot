@@ -17,6 +17,10 @@ const MUSCLE_GROUPS = [
   'Chest', 'Back', 'Legs', 'Shoulders', 'Arms', 'Core', 'Cardio', 'Full Body'
 ];
 
+// Cardio is assumed to happen before every training, so it's loggable but
+// never something /suggest recommends.
+const SUGGESTABLE_GROUPS = MUSCLE_GROUPS.filter((g) => g !== 'Cardio');
+
 let db;
 
 async function initDb() {
@@ -71,6 +75,8 @@ const HELP_TEXT =
   "/stats - see totals per muscle group\n" +
   "/suggest - suggest what to train next\n" +
   "/delete - delete your most recent entry\n" +
+  "/delete <id> - delete a specific entry by its id (see /history)\n" +
+  "/export - download your training history as a CSV file (last 365 days)\n" +
   "/help - show this list again";
 
 const bot = new Telegraf(BOT_TOKEN);
@@ -113,7 +119,7 @@ bot.action(/^log:(.+)$/, async (ctx) => {
 bot.command('history', async (ctx) => {
   const userId = ctx.from.id;
   const rows = await db.all(
-    `SELECT muscle_group, trained_at FROM trainings
+    `SELECT id, muscle_group, trained_at FROM trainings
      WHERE user_id = ? ORDER BY id DESC LIMIT 10`,
     [userId]
   );
@@ -122,8 +128,8 @@ bot.command('history', async (ctx) => {
     return ctx.reply('No trainings logged yet. Use /log to add one.');
   }
 
-  const lines = rows.map((r) => `${formatDisplayDate(r.trained_at)} — ${r.muscle_group}`);
-  ctx.reply(`Last ${rows.length} trainings:\n\n${lines.join('\n')}`);
+  const lines = rows.map((r) => `#${r.id} — ${formatDisplayDate(r.trained_at)} — ${r.muscle_group}`);
+  ctx.reply(`Last ${rows.length} trainings:\n\n${lines.join('\n')}\n\nUse /delete <id> to remove a specific entry.`);
 });
 
 // /stats -> counts per muscle group
@@ -159,7 +165,7 @@ bot.command('suggest', async (ctx) => {
       [userId]
     );
     const trainedSet = new Set(trainedRows.map((r) => r.muscle_group));
-    const untrained = MUSCLE_GROUPS.filter((g) => !trainedSet.has(g));
+    const untrained = SUGGESTABLE_GROUPS.filter((g) => !trainedSet.has(g));
 
     if (untrained.length === 0) {
       return ctx.reply(
@@ -181,14 +187,14 @@ bot.command('suggest', async (ctx) => {
   );
 
   const counts = {};
-  MUSCLE_GROUPS.forEach((g) => { counts[g] = 0; });
+  SUGGESTABLE_GROUPS.forEach((g) => { counts[g] = 0; });
   recentRows.forEach((r) => {
     if (counts[r.muscle_group] !== undefined) counts[r.muscle_group] += 1;
   });
 
-  const minCount = Math.min(...MUSCLE_GROUPS.map((g) => counts[g]));
-  const neglected = MUSCLE_GROUPS.filter((g) => counts[g] === minCount);
-  const breakdown = MUSCLE_GROUPS
+  const minCount = Math.min(...SUGGESTABLE_GROUPS.map((g) => counts[g]));
+  const neglected = SUGGESTABLE_GROUPS.filter((g) => counts[g] === minCount);
+  const breakdown = SUGGESTABLE_GROUPS
     .slice()
     .sort((a, b) => counts[a] - counts[b])
     .map((g) => `${g}: ${counts[g]}`)
@@ -201,20 +207,78 @@ bot.command('suggest', async (ctx) => {
 });
 
 // /delete -> remove most recent entry (undo mistakes)
+// /delete <id> -> remove a specific entry by id (see /history for ids)
 bot.command('delete', async (ctx) => {
   const userId = ctx.from.id;
-  const last = await db.get(
-    `SELECT id, muscle_group, trained_at FROM trainings
-     WHERE user_id = ? ORDER BY id DESC LIMIT 1`,
-    [userId]
-  );
+  const [, idArg] = ctx.message.text.trim().split(/\s+/);
 
-  if (!last) {
-    return ctx.reply('Nothing to delete.');
+  let target;
+  if (idArg !== undefined) {
+    const id = Number(idArg);
+    if (!Number.isInteger(id)) {
+      return ctx.reply('That id looks invalid. Usage: /delete <id> (see /history for ids).');
+    }
+    target = await db.get(
+      `SELECT id, muscle_group, trained_at FROM trainings WHERE id = ? AND user_id = ?`,
+      [id, userId]
+    );
+    if (!target) {
+      return ctx.reply(`No entry with id ${id} found in your history.`);
+    }
+  } else {
+    target = await db.get(
+      `SELECT id, muscle_group, trained_at FROM trainings
+       WHERE user_id = ? ORDER BY id DESC LIMIT 1`,
+      [userId]
+    );
+    if (!target) {
+      return ctx.reply('Nothing to delete.');
+    }
   }
 
-  await db.run(`DELETE FROM trainings WHERE id = ?`, [last.id]);
-  ctx.reply(`🗑️ Deleted: ${last.muscle_group} — ${last.trained_at}`);
+  await db.run(`DELETE FROM trainings WHERE id = ?`, [target.id]);
+  ctx.reply(`🗑️ Deleted #${target.id}: ${target.muscle_group} — ${target.trained_at}`);
+});
+
+// Escapes a value for CSV: wraps in quotes and doubles any embedded quotes
+// whenever it contains a comma, quote, or newline.
+function csvEscape(value) {
+  const str = value === null || value === undefined ? '' : String(value);
+  if (/[",\n]/.test(str)) {
+    return `"${str.replace(/"/g, '""')}"`;
+  }
+  return str;
+}
+
+// /export -> download training history as CSV, capped at the last 365 days
+// (roughly a year) to keep exports bounded in size
+bot.command('export', async (ctx) => {
+  const userId = ctx.from.id;
+
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - 365);
+  const cutoffISO = cutoff.toISOString().slice(0, 10);
+
+  const rows = await db.all(
+    `SELECT id, muscle_group, note, trained_at FROM trainings
+     WHERE user_id = ? AND trained_at >= ? ORDER BY trained_at ASC, id ASC`,
+    [userId, cutoffISO]
+  );
+
+  if (rows.length === 0) {
+    return ctx.reply('No trainings in the last 365 days to export.');
+  }
+
+  const header = ['id', 'date', 'muscle_group', 'note'].join(',');
+  const lines = rows.map((r) =>
+    [r.id, r.trained_at, csvEscape(r.muscle_group), csvEscape(r.note)].join(',')
+  );
+  const csv = [header, ...lines].join('\n');
+
+  await ctx.replyWithDocument({
+    source: Buffer.from(csv, 'utf-8'),
+    filename: `gym-history-${todayISO()}.csv`,
+  });
 });
 
 // Fallback: any text that isn't a recognized command
