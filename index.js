@@ -17,9 +17,10 @@ const MUSCLE_GROUPS = [
   'Chest', 'Back', 'Legs', 'Shoulders', 'Arms', 'Core', 'Cardio', 'Full Body'
 ];
 
-// Cardio is assumed to happen before every training, so it's loggable but
-// never something /suggest recommends.
-const SUGGESTABLE_GROUPS = MUSCLE_GROUPS.filter((g) => g !== 'Cardio');
+// Cardio is assumed to happen before every training, and Full Body isn't a
+// specific neglected muscle group — both are loggable but never something
+// /suggest recommends.
+const SUGGESTABLE_GROUPS = MUSCLE_GROUPS.filter((g) => g !== 'Cardio' && g !== 'Full Body');
 
 let db;
 
@@ -75,7 +76,6 @@ const HELP_TEXT =
   "/stats - see totals per muscle group\n" +
   "/suggest - suggest what to train next\n" +
   "/delete - delete your most recent entry\n" +
-  "/delete <id> - delete a specific entry by its id (see /history)\n" +
   "/export - download your training history as a CSV file (last 365 days)\n" +
   "/help - show this list again";
 

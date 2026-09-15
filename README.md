@@ -26,7 +26,6 @@ Logs your gym trainings (muscle group + date) to a local SQLite database.
 - `/stats` — total count per muscle group
 - `/suggest` — suggests what to train next based on your last 7 logs (or whatever you haven't trained yet, if you don't have 7 logs)
 - `/delete` — deletes your most recent entry (undo)
-- `/delete <id>` — deletes a specific entry by its id (see `/history` for ids)
 - `/export` — downloads your training history as a CSV file, capped at the last 365 days (about a year) to keep the file bounded in size
 
 ## Data
