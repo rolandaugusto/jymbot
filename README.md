@@ -42,6 +42,16 @@ Only one entry per user per day: logging again on a day that already has an entr
 
 Edit the `MUSCLE_GROUPS` array at the top of `index.js`.
 
+## sqlite3 version is pinned
+
+`sqlite3` is pinned to `5.1.7` (not a caret range) instead of the newer `6.0.1`.
+`6.0.1`'s prebuilt binary is linked against `GLIBC_2.38`, which is newer than
+what most deploy runtimes (including Railway's) provide — it fails at
+startup with `version 'GLIBC_2.38' not found`. `5.1.7` predates that
+toolchain bump and works on all common deploy targets. Don't bump this
+past `5.x` without first checking that the platform's prebuilt binary
+matches the runtime's glibc.
+
 ## Deploying to Railway
 
 1. Push this folder to a GitHub repo (Railway deploys from GitHub).
