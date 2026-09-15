@@ -14,8 +14,12 @@ if (!fs.existsSync(dbDir)) {
 }
 
 const MUSCLE_GROUPS = [
-  'Chest', 'Back', 'Legs', 'Shoulders', 'Arms', 'Core', 'Full Body'
+  'Chest', 'Back', 'Legs', 'Shoulders', 'Arms', 'Core', 'Cardio', 'Full Body'
 ];
+
+// Cardio is assumed to happen before every training, so it's loggable but
+// never something /suggest recommends.
+const SUGGESTABLE_GROUPS = MUSCLE_GROUPS.filter((g) => g !== 'Cardio');
 
 let db;
 
@@ -161,7 +165,7 @@ bot.command('suggest', async (ctx) => {
       [userId]
     );
     const trainedSet = new Set(trainedRows.map((r) => r.muscle_group));
-    const untrained = MUSCLE_GROUPS.filter((g) => !trainedSet.has(g));
+    const untrained = SUGGESTABLE_GROUPS.filter((g) => !trainedSet.has(g));
 
     if (untrained.length === 0) {
       return ctx.reply(
@@ -183,14 +187,14 @@ bot.command('suggest', async (ctx) => {
   );
 
   const counts = {};
-  MUSCLE_GROUPS.forEach((g) => { counts[g] = 0; });
+  SUGGESTABLE_GROUPS.forEach((g) => { counts[g] = 0; });
   recentRows.forEach((r) => {
     if (counts[r.muscle_group] !== undefined) counts[r.muscle_group] += 1;
   });
 
-  const minCount = Math.min(...MUSCLE_GROUPS.map((g) => counts[g]));
-  const neglected = MUSCLE_GROUPS.filter((g) => counts[g] === minCount);
-  const breakdown = MUSCLE_GROUPS
+  const minCount = Math.min(...SUGGESTABLE_GROUPS.map((g) => counts[g]));
+  const neglected = SUGGESTABLE_GROUPS.filter((g) => counts[g] === minCount);
+  const breakdown = SUGGESTABLE_GROUPS
     .slice()
     .sort((a, b) => counts[a] - counts[b])
     .map((g) => `${g}: ${counts[g]}`)
